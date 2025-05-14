@@ -1,0 +1,105 @@
+#include <ESP8266WiFi.h>
+#include <ThingSpeak.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <DHT.h>
+
+// LCD Setup
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// DHT11 Setup
+#define DHTPIN D5
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);
+
+// WiFi & ThingSpeak
+const char* ssid = "Iphone";
+const char* password = "98901047";
+WiFiClient client;
+unsigned long myChannelNumber = 2950586;
+const char* myWriteAPIKey = "H5W5NX27VXUE5CGZ";
+
+// Sensor & Actuator Pins
+#define SOIL_PIN D6        // Digital soil moisture
+#define LDR_ANALOG A0      // Analog LDR
+#define LDR_DIGITAL D3     // Second LDR (digital)
+#define LED_DARK D8
+#define LED_DRY D4
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(D2, D1);  // I2C LCD
+  lcd.init();
+  lcd.backlight();
+  dht.begin();
+  delay(2000);
+
+  pinMode(SOIL_PIN, INPUT);
+  pinMode(LDR_DIGITAL, INPUT);
+  pinMode(LED_DARK, OUTPUT);
+  pinMode(LED_DRY, OUTPUT);
+
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+
+  ThingSpeak.begin(client);
+}
+
+void loop() {
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+  int soilState = digitalRead(SOIL_PIN);      // HIGH = dry, LOW = wet
+  int ldrAnalog = analogRead(LDR_ANALOG);     // Light intensity
+  int ldrDigital = digitalRead(LDR_DIGITAL);  // HIGH = dark, LOW = bright
+
+  // Serial output
+  Serial.println("======= Sensor Data =======");
+  if (isnan(t) || isnan(h)) {
+    Serial.println("Failed to read from DHT sensor!");
+  } else {
+    Serial.printf("Temperature: %.1f C\n", t);
+    Serial.printf("Humidity: %.1f %%\n", h);
+  }
+  Serial.printf("Soil: %s\n", soilState == HIGH ? "Dry" : "Wet");
+  Serial.printf("LDR Analog: %d\n", ldrAnalog);
+  Serial.printf("LDR Digital: %s\n", ldrDigital == HIGH ? "Dark" : "Bright");
+
+  // LCD display
+  lcd.clear();
+  if (isnan(t) || isnan(h)) {
+    lcd.setCursor(0, 0);
+    lcd.print("DHT11 Error");
+  } else {
+    lcd.setCursor(0, 0);
+    lcd.print("T:");
+    lcd.print(t, 1);
+    lcd.print(" H:");
+    lcd.print(h, 0);
+  }
+  lcd.setCursor(0, 1);
+  lcd.print("S:");
+  lcd.print(soilState == HIGH ? "Dry " : "Wet ");
+  lcd.print("L:");
+  lcd.print(ldrAnalog);
+
+  // Control LEDs
+  digitalWrite(LED_DARK, ldrDigital == HIGH ? HIGH : LOW);    // Glow in dark
+  digitalWrite(LED_DRY, soilState == HIGH ? HIGH : LOW);      // Glow if soil dry
+
+  // Send to ThingSpeak
+  if (!isnan(t) && !isnan(h)) {
+    ThingSpeak.setField(1, t);
+    ThingSpeak.setField(2, h);
+  }
+  ThingSpeak.setField(3, soilState);
+  ThingSpeak.setField(4, ldrAnalog);
+  ThingSpeak.setField(5, ldrDigital);
+  ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
+
+  delay(3000); // 3 second delay
+}
